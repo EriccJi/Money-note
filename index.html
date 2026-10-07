@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>攒钱小账本</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root{ --bg:#0f1115; --card:#1a1d24; --fg:#e8eaed; --muted:#9aa0a6; --green:#34c759; --red:#ff453a; --blue:#0a84ff; --line:#2a2e37; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--fg); padding:16px; max-width:640px; margin:0 auto; }
+  .card{ background:var(--card); border-radius:16px; padding:18px; margin-bottom:14px; }
+  .big{ font-size:40px; font-weight:700; text-align:center; margin:6px 0; }
+  .big.over{ color:var(--red); }
+  .sub{ text-align:center; color:var(--muted); font-size:14px; }
+  h2{ font-size:16px; margin:0 0 12px; }
+  input,button{ font-size:16px; font-family:inherit; }
+  .row{ display:flex; gap:8px; }
+  input[type=number],input[type=text]{ flex:1; padding:12px; border-radius:10px; border:1px solid var(--line); background:#0f1115; color:var(--fg); width:100%; }
+  button{ padding:12px 18px; border:none; border-radius:10px; background:var(--blue); color:#fff; font-weight:600; cursor:pointer; }
+  button.ghost{ background:transparent; color:var(--muted); border:1px solid var(--line); font-weight:500; padding:8px 12px; font-size:14px; }
+  button.del{ background:transparent; color:var(--red); border:none; font-size:13px; padding:4px 8px; }
+  .list{ list-style:none; padding:0; margin:0; }
+  .list li{ display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); gap:10px; }
+  .list li:last-child{ border-bottom:none; }
+  .meta{ color:var(--muted); font-size:13px; }
+  .bar{ height:10px; background:#0f1115; border-radius:6px; overflow:hidden; margin-top:8px; }
+  .bar > span{ display:block; height:100%; background:var(--green); transition:width .3s; }
+  .toggle{ display:flex; gap:8px; margin-bottom:10px; }
+  .toggle button{ background:#0f1115; color:var(--muted); border:1px solid var(--line); flex:1; }
+  .toggle button.on{ background:var(--blue); color:#fff; border-color:var(--blue); }
+  .hidden{ display:none; }
+  .muted{ color:var(--muted); font-size:13px; }
+  details{ margin-top:8px; }
+  summary{ cursor:pointer; color:var(--muted); font-size:14px; }
+  label{ display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  hr{ border:none; border-top:1px solid var(--line); margin:16px 0; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="sub">今天最多还能花</div>
+    <div id="topNum" class="big">—</div>
+    <div id="topSub" class="sub">先去「设置」填生活费和想攒的钱</div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <input id="amt" type="number" inputmode="decimal" placeholder="花了多少，比如 35">
+      <button id="addBtn">记一笔</button>
+    </div>
+    <input id="note" type="text" placeholder="备注（可选），比如 午饭" style="margin-top:8px;">
+  </div>
+
+  <div class="card">
+    <h2>本月攒钱进度</h2>
+    <div id="progText" class="sub">先填设置</div>
+    <div class="bar"><span id="progBar" style="width:0%"></span></div>
+  </div>
+
+  <div class="card">
+    <h2>消费走势</h2>
+    <div class="toggle">
+      <button id="tabMonth" class="on">本月</button>
+      <button id="tabWeek">本周</button>
+    </div>
+    <canvas id="chart" height="180"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>今天的花费</h2>
+    <ul id="todayList" class="list"><li class="muted">今天还没记</li></ul>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary>设置（生活费 / 想攒的钱 / 同步）</summary>
+      <label>这个月生活费</label>
+      <input id="budget" type="number" placeholder="比如 5000">
+      <label>这个月想攒的钱</label>
+      <input id="save" type="number" placeholder="比如 1000">
+      <button id="saveBtn" class="ghost" style="margin-top:10px;">保存设置</button>
+      <hr>
+      <h2>同步到网上（可选，手机电脑共用）</h2>
+      <div class="muted">第一次填一次你的 GitHub 信息，之后手机电脑打开同一个网址就自动同步，不用再输密码。建议仓库设成私有。</div>
+      <label>GitHub 用户名</label>
+      <input id="ghUser" type="text" placeholder="你的用户名" value="EriccJi">
+      <label>仓库名</label>
+      <input id="ghRepo" type="text" placeholder="比如 zhangben" value="Money-note">
+      <label>存放账本的文件路径</label>
+      <input id="ghPath" type="text" placeholder="ledger.json" value="ledger.json">
+      <label>访问令牌（Token）</label>
+      <input id="ghToken" type="text" placeholder="ghp_...">
+      <button id="syncBtn" class="ghost" style="margin-top:10px;">保存同步设置并立即同步</button>
+      <div id="syncMsg" class="muted" style="margin-top:8px;"></div>
+    </details>
+  </div>
+
+<script>
+const LS_KEY = 'ledger_v1';
+const LS_SYNC = 'ledger_sync_v1';
+let state = load();
+let sync = loadSync();
+let chartRange = 'month';
+let chart;
+
+function todayStr(){
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function load(){
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || { settings:{budget:null,save:null}, expenses:[] }; }
+  catch(e){ return { settings:{budget:null,save:null}, expenses:[] }; }
+}
+function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+function loadSync(){
+  try { return JSON.parse(localStorage.getItem(LS_SYNC)) || null; } catch(e){ return null; }
+}
+function saveSync(){ localStorage.setItem(LS_SYNC, JSON.stringify(sync)); }
+
+function daysInMonth(){ const d = new Date(); return new Date(d.getFullYear(), d.getMonth()+1, 0).getDate(); }
+function dayOfMonth(){ return new Date().getDate(); }
+function dailyLimit(){
+  const s = state.settings;
+  if(s.budget == null || s.save == null) return null;
+  const dim = daysInMonth();
+  const left = dim - (dayOfMonth() - 1);
+  if(left <= 0) return null;
+  return (s.budget - s.save) / left;
+}
+function spentOn(dateStr){ return state.expenses.filter(e => e.date === dateStr).reduce((a,e) => a + e.amount, 0); }
+function monthSpent(){
+  const t = todayStr(); const ym = t.slice(0,7);
+  return state.expenses.filter(e => e.date.startsWith(ym)).reduce((a,e) => a + e.amount, 0);
+}
+function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function render(){
+  const dl = dailyLimit();
+  const top = document.getElementById('topNum');
+  const topSub = document.getElementById('topSub');
+  if(dl == null){
+    top.textContent = '—'; top.className = 'big';
+    topSub.textContent = '先去「设置」填生活费和想攒的钱';
+  } else {
+    const todaySpent = spentOn(todayStr());
+    const remain = dl - todaySpent;
+    if(remain >= 0){ top.textContent = '今天还能花 ' + remain.toFixed(0) + ' 元'; top.className = 'big'; }
+    else { top.textContent = '今天已超支 ' + (-remain).toFixed(0) + ' 元'; top.className = 'big over'; }
+    topSub.textContent = '每天上限 ' + dl.toFixed(0) + ' 元 · 今天已花 ' + todaySpent.toFixed(0) + ' 元';
+  }
+
+  const s = state.settings;
+  const progText = document.getElementById('progText');
+  const progBar = document.getElementById('progBar');
+  if(s.budget == null || s.save == null){
+    progText.textContent = '先填设置'; progBar.style.width = '0%';
+  } else {
+    const daily = dl;
+    const passed = dayOfMonth();
+    const planSpent = daily * passed;
+    const actual = monthSpent();
+    const overspend = actual - planSpent;
+    const saved = s.save - overspend;
+    const pct = Math.max(0, Math.min(100, saved / s.save * 100));
+    progText.textContent = '这个月已攒 ' + Math.max(0, saved).toFixed(0) + ' 元 / 目标 ' + s.save + ' 元';
+    progBar.style.width = pct.toFixed(0) + '%';
+    progBar.style.background = saved < 0 ? 'var(--red)' : 'var(--green)';
+  }
+
+  const list = document.getElementById('todayList');
+  const todays = state.expenses.filter(e => e.date === todayStr()).sort((a,b) => b.id - a.id);
+  if(todays.length === 0){ list.innerHTML = '<li class="muted">今天还没记</li>'; }
+  else {
+    list.innerHTML = todays.map(e =>
+      '<li><span>' + e.amount.toFixed(0) + ' 元' + (e.note ? ' · ' + escapeHtml(e.note) : '') +
+      ' <span class="meta">' + e.time + '</span></span><button class="del" data-id="' + e.id + '">删</button></li>'
+    ).join('');
+  }
+
+  renderChart();
+}
+
+function renderChart(){
+  if(typeof Chart === 'undefined') return;
+  const t = todayStr(); const ym = t.slice(0,7);
+  let labels = [], data = [];
+  if(chartRange === 'month'){
+    const dim = daysInMonth(); const d = dayOfMonth();
+    for(let i=1;i<=d;i++){
+      const ds = ym + '-' + String(i).padStart(2,'0');
+      labels.push(i + '日'); data.push(spentOn(ds));
+    }
+  } else {
+    const now = new Date();
+    for(let i=6;i>=0;i--){
+      const d = new Date(now); d.setDate(now.getDate()-i);
+      const ds = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+      labels.push((d.getMonth()+1) + '/' + d.getDate()); data.push(spentOn(ds));
+    }
+  }
+  if(chart) chart.destroy();
+  const ctx = document.getElementById('chart').getContext('2d');
+  chart = new Chart(ctx, {
+    type:'line',
+    data:{ labels, datasets:[{ label:'花费', data, borderColor:'#0a84ff', backgroundColor:'rgba(10,132,255,0.15)', fill:true, tension:0.3, pointRadius:3 }] },
+    options:{ plugins:{ legend:{ display:false } }, scales:{
+      x:{ ticks:{ color:'#9aa0a6' }, grid:{ color:'#2a2e37' } },
+      y:{ ticks:{ color:'#9aa0a6' }, grid:{ color:'#2a2e37' }, beginAtZero:true }
+    } }
+  });
+}
+
+document.getElementById('addBtn').onclick = () => {
+  const amt = parseFloat(document.getElementById('amt').value);
+  if(!amt || amt <= 0){ alert('先输入一个大于 0 的金额'); return; }
+  const note = document.getElementById('note').value.trim();
+  const d = new Date();
+  state.expenses.push({ id:Date.now(), amount:amt, date:todayStr(), time:String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'), note });
+  document.getElementById('amt').value = ''; document.getElementById('note').value = '';
+  save(); render(); pushSync();
+};
+document.getElementById('todayList').onclick = (ev) => {
+  if(ev.target.classList.contains('del')){
+    const id = +ev.target.dataset.id;
+    state.expenses = state.expenses.filter(e => e.id !== id);
+    save(); render(); pushSync();
+  }
+};
+document.getElementById('saveBtn').onclick = () => {
+  const b = parseFloat(document.getElementById('budget').value);
+  const sv = parseFloat(document.getElementById('save').value);
+  if(isNaN(b) || isNaN(sv)){ alert('生活费和想攒的钱都要填数字'); return; }
+  state.settings = { budget:b, save:sv };
+  save(); render(); pushSync();
+};
+document.getElementById('tabMonth').onclick = () => { chartRange='month'; document.getElementById('tabMonth').className='on'; document.getElementById('tabWeek').className=''; renderChart(); };
+document.getElementById('tabWeek').onclick = () => { chartRange='week'; document.getElementById('tabWeek').className='on'; document.getElementById('tabMonth').className=''; renderChart(); };
+
+document.getElementById('syncBtn').onclick = () => {
+  sync = {
+    user: document.getElementById('ghUser').value.trim(),
+    repo: document.getElementById('ghRepo').value.trim(),
+    path: document.getElementById('ghPath').value.trim() || 'ledger.json',
+    token: document.getElementById('ghToken').value.trim()
+  };
+  if(!sync.user || !sync.repo || !sync.token){ alert('用户名、仓库、令牌都要填'); return; }
+  saveSync(); pushSync(true);
+};
+
+async function pushSync(verbose){
+  if(!sync || !sync.token) return;
+  const msg = document.getElementById('syncMsg');
+  const url = 'https://api.github.com/repos/' + sync.user + '/' + sync.repo + '/contents/' + encodeURIComponent(sync.path);
+  const head = { Authorization:'Bearer ' + sync.token, Accept:'application/vnd.github+json' };
+  try {
+    let sha = null;
+    const cur = await fetch(url, { headers:head });
+    if(cur.ok){ const j = await cur.json(); sha = j.sha; }
+    const content = btoa(unescape(encodeURIComponent(JSON.stringify(state))));
+    const res = await fetch(url, { method:'PUT', headers:head, body:JSON.stringify({ message:'sync ledger', content, sha: sha || undefined }) });
+    if(verbose) msg.textContent = res.ok ? '已同步到网上 ✅' : '同步失败：' + res.status;
+  } catch(e){ if(verbose) msg.textContent = '同步出错：' + e.message; }
+}
+async function pullSync(){
+  if(!sync || !sync.token) return;
+  const url = 'https://api.github.com/repos/' + sync.user + '/' + sync.repo + '/contents/' + encodeURIComponent(sync.path);
+  try {
+    const res = await fetch(url, { headers:{ Authorization:'Bearer ' + sync.token, Accept:'application/vnd.github+json' } });
+    if(res.ok){ const j = await res.json(); const txt = decodeURIComponent(escape(atob(j.content))); state = JSON.parse(txt); save(); render(); }
+  } catch(e){}
+}
+
+if(sync && sync.token){ pullSync().then(render); } else { render(); }
+</script>
+</body>
+</html>
